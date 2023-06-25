@@ -15,7 +15,7 @@ new_profile = False
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--profile', help='name of profile')
-    parser.add_argument('-d', '--datasets', help='name of dataset directories, separate with ","')
+    parser.add_argument('-d', '--dataset', help='name of dataset directories, separate with ","')
     parser.add_argument('-m', '--models', help='name of model directories, separate with ","')
     parser.add_argument('-u', '--update', action='store_true', help='update only; do not attempt to create profile')
     parser.add_argument('-c', '--copy', action='store_true', help='make respective model folders for dataset folders')
@@ -38,8 +38,8 @@ def make_profile(profile):
 def make_data_dir(profile, data_dirs):
     for ddir in data_dirs:
         data_path = f"../../profiles/{profile}/data/{ddir}"
-        new_folders = [f"{data_path}/train", f"{data_path}/train/vis", f"{data_path}/valid",
-                    f"{data_path}/valid/vis", f"{data_path}/test", f"{data_path}/all"]
+        new_folders = [f"{data_path}/train", f"{data_path}/train/vis", f"{data_path}/valid", f"{data_path}/valid/vis",
+                       f"{data_path}/test", f"{data_path}/test/vis", f"{data_path}/all"]
 
         if not os.path.exists(data_path):
             for folder in new_folders:
@@ -59,22 +59,28 @@ def make_model_dir(profile, model_dirs):
             print(f"\nERROR: model '{mdir}' already exists")
 
 
-if __name__ == "__main__":
+def get_input():
     args = get_args()
-    profile = args['profile']
+    profile, data, models, update, copy = \
+        args.get('profile'), args.get('dataset'), args.get('models'), args['update'], args['copy']
+    return profile, data, models, update, copy
+
+
+if __name__ == "__main__":
+    profile, data, models, update, copy = get_input()
 
     if not os.path.exists(f"../../profiles/{profile}"):
         make_profile(profile)
         new_profile = True
-    if args['update'] or new_profile:
-        if args['datasets'] is not None:
-            data_dirs = args['datasets'].split(delimiter)
+    if update or new_profile:
+        if data is not None:
+            data_dirs = data.split(delimiter)
             make_data_dir(profile, data_dirs)
-        if args['models'] is not None:
-            model_dirs = args['models'].split(delimiter)
+        if models is not None:
+            model_dirs = models.split(delimiter)
             make_model_dir(profile, model_dirs)
-        elif args['copy']:
-            model_dirs = args['datasets'].split(delimiter)
+        elif copy:
+            model_dirs = data.split(delimiter)
             make_model_dir(profile, model_dirs)
     else:
         print("\nno actions taken")

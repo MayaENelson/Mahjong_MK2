@@ -1,121 +1,165 @@
-# get image set to 1000 images
-# take available image and pascal VOC label
-# cycle through each photo until 1000 is reached
-# edit the image and pascal VOC label
-# save to folder
+# creates copies of and augment the existing dataset to increase dataset size
+# cli args: -p
+#           -d
+#           -n
+#           -pp
+#           -m
+#           -f
+#           -s
 
-import albumentations as A
-import cv2
 import cv2 as cv
 import os
 import glob
 import argparse
-import numpy as np
 import itertools
 import random
 import string
 from xml.etree import ElementTree as et
-
-transform_pipeline = A.Compose(
-    [
-        A.SomeOf([
-            A.OneOf([A.HorizontalFlip(), A.VerticalFlip()]),
-            A.OneOf([A.RandomRotate90(), A.Transpose(), A.ShiftScaleRotate()]),
-            A.OneOf([A.ElasticTransform(), A.GridDistortion()]),
-            A.RandomSizedCrop(min_max_height=(500, 600), height=1000, width=700, p=1),
-            A.OneOf([A.ChannelShuffle(), A.RandomBrightnessContrast(), A.CLAHE(), A.ToGray()]),
-            A.OneOf([A.Solarize(), A.RandomSunFlare(), A.Spatter()]),
-            A.OneOf([A.GlassBlur(sigma=0.5, max_delta=2), A.Downscale(interpolation=cv2.INTER_NEAREST),
-                     A.MotionBlur(blur_limit=15)]),
-            ], n=3)
-    ],
-    bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
+import importlib
+import albumentations as A
 
 
-class OriginalImageset:
-    def __init__(self, root_path, txt_path):
-        with open(txt_path, "r") as file:
-            image_dirs = eval(file.read())
+class PascalVOC:
+    def __init__(self, filename, width, height):
+        self.root = et.Element("annotation")
+        self.folder = et.SubElement(self.root, "folder")
+        self.filename = et.SubElement(self.root, "filename")
+        self.filename.text = filename
+        self.size = et.SubElement(self.root, "size")
+        self.width = et.SubElement(self.size, "width")
+        self.width.text = str(width)
+        self.height = et.SubElement(self.size, "height")
+        self.height.text = str(height)
 
-        self.__root_path = root_path
-        self.__image_dirs = image_dirs
-        self.__images = []
+    def add_bbox(self, label, xmin, ymin, xmax, ymax):
+        obj = et.SubElement(self.root, "object")
+        name = et.SubElement(obj, "name")
+        name.text = label
+        bndbox = et.SubElement(obj, "bndbox")
+        xmin_elem = et.SubElement(bndbox, "xmin")
+        xmin_elem.text = str(xmin)
+        ymin_elem = et.SubElement(bndbox, "ymin")
+        ymin_elem.text = str(ymin)
+        xmax_elem = et.SubElement(bndbox, "xmax")
+        xmax_elem.text = str(xmax)
+        ymax_elem = et.SubElement(bndbox, "ymax")
+        ymax_elem.text = str(ymax)
 
-    def convert_numpy(self):
-        for image_dir in self.__image_dirs:
-            img = cv.cvtColor(cv.imread(image_dir), cv.COLOR_BGR2RGB)
-            self.__images.append(img)
-
-    def view_images(self):
-        for img in self.__images:
-            img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
-            cv.imshow('Original Images', img)
-            cv.waitKey(0)
-
-    def get_images(self):
-        return self.__images
-
-    def get_image_dirs(self):
-        return self.__image_dirs
+    def write_xml(self, filepath):
+        tree = et.ElementTree(self.root)
+        tree.write(filepath)
 
 
-class NewImageset:
-    def __init__(self, root_path):
-        self.__root_path = root_path
-        self.__image_dirs = []
-        self.__images = []
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--profile', help='name of profile')
+    parser.add_argument('-d', '--dataset', help='name of dataset directory')
+    parser.add_argument('-n', '--number', help='number of images to create using transformation pipeline')
+    parser.add_argument('-pp', '--pipeline', help='name of transformation pipeline')
+    parser.add_argument('-m', '--manual', action='store_true', help='flag for pipeline with no bbox function')
+    parser.add_argument('-f', '--first', action='store_true', help='flag for first launch')
+    parser.add_argument('-s', '--show', action='store_true', help='show number of images currently in dataset')
+    args = vars(parser.parse_args())
 
-    def create_images(self, orig_images, orig_image_dirs, transform_pipeline, number):
-        number_files = len(glob.glob(f"{self.__root_path}/*.png"))
-        # re-use all the available images to make a set of 'number' available images to alter
-        orig_images = itertools.islice(itertools.cycle(orig_images), number - number_files)
-        orig_image_dirs = itertools.islice(itertools.cycle(orig_image_dirs), number - number_files)
+    return args
 
-        for img, img_dir in zip(orig_images, orig_image_dirs):
 
-            boxes, labels = convert_xml(img_dir)
+def create_images(root_path, orig_image_dirs, number, transform_pipeline, transform_type):
+    # re-use all the available images to make a set of 'number' available images to alter
+    orig_image_dirs = itertools.islice(itertools.cycle(orig_image_dirs), number)
+    read_write_img(orig_image_dirs, transform_type, transform_pipeline, root_path)
 
-            transformed_dict = transform_pipeline(image=img, bboxes=boxes, labels=labels)
-            transformed_img = transformed_dict['image']
-            transformed_bbox = transformed_dict['bboxes']
-            transformed_labels = transformed_dict['labels']
 
-            transformed_img = cv.cvtColor(transformed_img, cv.COLOR_RGB2BGR)
-            random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-            cv.imwrite(f"{self.__root_path}/{random_string}.png", transformed_img)
+def read_write_img(orig_image_dirs, transform_type, transform_pipeline, root_path):
+    for img_dir in orig_image_dirs:
+        img = cv.cvtColor(cv.imread(img_dir), cv.COLOR_BGR2RGB)
+        transformed_img_dict = make_transformed_dict(transform_type, transform_pipeline, img_dir, img)
+        filename = write_image(transformed_img_dict)
+        bbox_write_xml(transform_type, transformed_img_dict, filename, root_path)
 
-            print(boxes, labels)
 
-    def view_images(self):
-        for img in self.__images:
-            cv.imshow('Original Images', img)
-            cv.waitKey(0)
+def make_transformed_dict(transform_type, transform_pipeline, img_dir, img):
+    if transform_type == "non-manual":
+        boxes, labels = extract_bbox_xml(img_dir)
+        transformed_dict = transform_pipeline(image=img, bboxes=boxes, labels=labels)
+    else:
+        transformed_dict = transform_pipeline(image=img)
+
+    return transformed_dict
+
+
+def write_image(transformed_dict):
+    transformed_img, _, _ = get_dict_vals(transformed_dict)
+    transformed_img = cv.cvtColor(transformed_img, cv.COLOR_RGB2BGR)
+
+    random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+    filename = f"{random_string}.png"
+
+    cv.imwrite(f"{root_path}/{filename}", transformed_img)
+
+    return filename
+
+
+def get_dict_vals(transformed_dict):
+    transformed_img = transformed_dict['image']
+    transformed_bbox = transformed_dict.get('bboxes')
+    transformed_labels = transformed_dict.get('labels')
+
+    return transformed_img, transformed_bbox, transformed_labels
+
+
+def bbox_write_xml(transform_type, transformed_dict, filename, root_path):
+    transformed_img, transformed_bbox, transformed_labels = get_dict_vals(transformed_dict)
+
+    if transformed_bbox:
+        transformed_bbox = [[round(num, 1) for num in sublist] for sublist in transformed_bbox]
+
+    if transform_type == "non-manual":
+        height, width, _ = transformed_img.shape
+        xml_writer = PascalVOC(filename, height, width)
+
+        for label, bbox in zip(transformed_labels, transformed_bbox):
+            xml_writer.add_bbox(label, bbox[0], bbox[1], bbox[2], bbox[3])
+        xml_writer.write_xml(f"{root_path}/{filename.split('.')[0]}.xml")
 
 
 def initialize_original(root_path):
-
     image_dirs = glob.glob(f"{root_path}/*.png")
-    rename_original(image_dirs)
+    rename_overwrite(image_dirs)
     image_dirs = glob.glob(f"{root_path}/*.png")
 
     txt_path = f"{root_path}/orig_dirs.txt"
 
-    with open(txt_path, "w") as file:
-        file.write(repr(image_dirs))
+    with open(txt_path, "w") as txt_file:
+        txt_file.write(repr(image_dirs))
 
 
-def rename_original(image_dirs):
+def rename_overwrite(image_dirs):
     for idx, img_dir in enumerate(image_dirs):
         xml_path = os.path.splitext(img_dir)[0] + ".xml"
 
-        new_img_path = os.path.join(os.path.dirname(img_dir), f"original_{idx}.png")
-        new_xml_path = os.path.join(os.path.dirname(xml_path), f"original_{idx}.xml")
-        os.rename(img_dir, new_img_path)
-        os.rename(xml_path, new_xml_path)
+        new_xml_path = rename_original_files(idx, img_dir, xml_path)
+        overwrite_original_xmls(idx, new_xml_path)
 
 
+def rename_original_files(idx, img_dir, xml_path):
+    new_img_path = os.path.join(os.path.dirname(img_dir), f"original_{idx}.png")
+    new_xml_path = os.path.join(os.path.dirname(xml_path), f"original_{idx}.xml")
+    os.rename(img_dir, new_img_path)
+    os.rename(xml_path, new_xml_path)
 
-def convert_xml(img_dir):
+    return new_xml_path
+
+
+def overwrite_original_xmls(idx, new_xml_path):
+    tree = et.parse(new_xml_path)
+    root = tree.getroot()
+    title = root.find("filename")
+    title.text = f"original_{idx}.png"
+    tree.write(new_xml_path)
+
+
+def extract_bbox_xml(img_dir):
     boxes = []
     labels = []
 
@@ -136,39 +180,69 @@ def convert_xml(img_dir):
     return boxes, labels
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--profile', help='name of profile')
-    parser.add_argument('-d', '--dataset', help='name of dataset')
-    parser.add_argument('-n', '--number', help='number of images to create from existing')
-    parser.add_argument('-f', '--first', action='store_true', help='flag for first launch')
-    args = vars(parser.parse_args())
-
-    return args
+def instance_request(instance_name):
+    module = importlib.import_module("albumentations_pipelines")
+    instance = getattr(module, instance_name)
+    return instance
 
 
-def transforms():
-    pass
+def convert_number_img(number_img):
+    if number_img is None:
+        number_img = 0
+    else:
+        number_img = int(number_img)
+    return number_img
+
+
+def get_input():
+    args = get_args()
+    profile, dataset, number, pipeline, manual, first, show, = \
+        args.get('profile'), args.get('dataset'), args.get('number'), args.get('pipeline'), \
+        args['manual'], args['first'], args['show']
+    number = convert_number_img(number)
+    return profile, dataset, number, pipeline, manual, first, show
+
+
+def get_pipeline(manual, transform_pipeline):
+    if manual:
+        transform_type = "manual"
+    else:
+        transform_type = "non-manual"
+
+    transform_pipeline = instance_request(transform_pipeline)
+    return transform_type, transform_pipeline
+
+
+def first_show_flags_fx(first, show, root_path):
+    if first and not os.path.isfile(f"{root_path}/orig_dirs.txt"):
+        initialize_original(root_path)
+    if show:
+        number_files = len(glob.glob(f"{root_path}/*.png"))
+        print(f"\ncurrent number of images: {number_files}")
+
+
+def get_orig_img_dirs(root_path):
+    with open(f"{root_path}/orig_dirs.txt", "r") as file:
+        orig_image_dirs = eval(file.read())
+    return orig_image_dirs
 
 
 if __name__ == "__main__":
-    args = get_args()
-    profile = args['profile']
-    dataset = args['dataset']
-    number = int(args['number'])
 
+    profile, dataset, number, pipeline, manual, first, show = get_input()
 
-    # deal with file not found
     root_path = f"../../profiles/{profile}/data/{dataset}/all"
+    exists = os.path.exists(root_path)
 
-    if args['first']:
-        initialize_original(root_path)
-    if os.path.isfile(f"{root_path}/orig_dirs.txt"):
-        orig_image_set = OriginalImageset(root_path, f"{root_path}/orig_dirs.txt")
-        orig_image_set.convert_numpy()
-        var_orig_image_set = orig_image_set.get_images()
-        orig_image_dirs = orig_image_set.get_image_dirs()
-        new_image_set = NewImageset(root_path)
-        new_image_set.create_images(var_orig_image_set, orig_image_dirs, transform_pipeline, number)
+    if exists:
+        first_show_flags_fx(first, show, root_path)
+        transform_type, transform_pipeline = get_pipeline(manual, pipeline)
+
+        if os.path.isfile(f"{root_path}/orig_dirs.txt") and isinstance(transform_pipeline, A.Compose):
+            orig_image_dirs = get_orig_img_dirs(root_path)
+            create_images(root_path, orig_image_dirs, number, transform_pipeline, transform_type)
+        else:
+            print("check: specify a pipeline")
+            print("check: use the first flag '-f' to make 'orig_dirs.txt'")
     else:
-        print("use the first flag '-f' to make 'orig_dirs.txt'")
+        print("check: filepath")

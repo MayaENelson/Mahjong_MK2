@@ -26,18 +26,23 @@ def get_args():
 def get_input():
     args = get_args()
     profile, dataset1, dataset2, function = \
-        args.get('profile'), args.get('dataset1'), args.get('dataset1'), args.get('function')
+        args.get('profile'), args.get('dataset1'), args.get('dataset2'), args.get('function')
     return profile, dataset1, dataset2, function
 
 
 def a2a(origin_path, destination_path):
-    shutil.copy(origin_path, destination_path)
+    file_list = os.listdir(origin_path)
+    for file_name in file_list:
+        source_file = os.path.join(origin_path, file_name)
+        destination_file = os.path.join(destination_path, file_name)
+        shutil.copy(source_file, destination_file)
+
 
 
 def a2tv(origin_path, num_files):
 
     split_path = origin_path.replace("/all", "")
-    train_percent = check("A2TV", float(input("specify percentage allocated to training set (0.X): ")))
+    train_percent = check("A2TV", float(input("specify percentage allocated to training set (0.X): ")), None)
 
     train_num = int(num_files*float(train_percent))
     valid_num = num_files - train_num

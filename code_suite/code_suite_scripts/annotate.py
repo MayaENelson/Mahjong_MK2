@@ -31,9 +31,9 @@ def instance_request(instance_name):
 
 
 def random_bright_color():
-    h = random.uniform(0, 1)
-    s = random.uniform(0.5, 1)
-    v = random.uniform(0.7, 1)
+    h = random.uniform(0, 1)  # Random hue value
+    s = random.uniform(0.5, 1)  # Random saturation value (higher values for brighter colors)
+    v = random.uniform(0.7, 1)  # Random value/brightness value (higher values for brighter colors)
     r, g, b = colorsys.hsv_to_rgb(h, s, v)
     return int(r * 255), int(g * 255), int(b * 255)
 
@@ -41,6 +41,7 @@ def random_bright_color():
 if __name__ == "__main__":
     label_type = get_input()
     labels = instance_request(label_type)
+    del labels[0]
     labels.insert(0, "All")
 
     image = cv.imread("../../profiles/mahjong/data/NESW_raw/all/original_0.png")

@@ -4,6 +4,8 @@
 
 import shutil
 import argparse
+import glob
+import os
 
 
 def get_args():
@@ -32,27 +34,80 @@ def a2a(origin_path, destination_path):
     shutil.copy(origin_path, destination_path)
 
 
-def a2tv(origin_path):
-    pass
+def a2tv(origin_path, num_files):
+
+    split_path = origin_path.replace("/all", "")
+    train_percent = check("A2TV", float(input("specify percentage allocated to training set (0.X): ")))
+
+    train_num = int(num_files*float(train_percent))
+    valid_num = num_files - train_num
+
+    png_files = glob.glob(f"{origin_path}/*.png")
+    png_files_iter = iter(png_files)
+
+    copy_file(train_num, png_files_iter, split_path, "train")
+    copy_file(valid_num, png_files_iter, split_path, "valid")
 
 
-def a2tvt(origin_path):
-    pass
+def a2tvt(origin_path, num_files):
+
+    split_path = origin_path.replace("/all", "")
+    train_percent = float(input("specify percentage allocated to training set (0.X): "))
+    valid_percent = float(input("specify percentage allocated to training set (0.X): "))
+    train_percent = check("A2TVT", train_percent, valid_percent)
+
+    train_num = int(num_files*train_percent)
+    valid_num = int(num_files*valid_percent)
+    test_num = num_files - train_num - valid_num
+
+    png_files = glob.glob(f"{origin_path}/*.png")
+    png_files_iter = iter(png_files)
+
+    copy_file(train_num, png_files_iter, split_path, "train")
+    copy_file(valid_num, png_files_iter, split_path, "valid")
+    copy_file(test_num, png_files_iter, split_path, "test")
+
+
+def copy_file(num_files, png_files_iter, split_path, folder):
+    for i in range(num_files):
+        try:
+            img_path = next(png_files_iter)
+            xml_path = os.path.splitext(img_path)[0] + ".xml"
+            shutil.copy(img_path, f"{split_path}/{folder}")
+            if os.path.exists(xml_path):
+                shutil.copy(xml_path, f"{split_path}/{folder}")
+        except StopIteration:
+            return
+
+
+def check(transfer_type, x, y):
+    if transfer_type == "A2TV":
+        if not 0 < x <= 1:
+            return 1.0
+        else:
+            return x
+    if transfer_type == "A2TVT":
+        if (x + y > 1) or x < 0 or y < 0:
+            return 1.0
+        else:
+            return x
 
 
 if __name__ == '__main__':
     profile, dataset1, dataset2, function = get_input()
     origin_path = f"../../profiles/{profile}/data/{dataset1}/all"
 
-    if function is "A2A" and dataset1 is not None and dataset2 is not None:
+    num_files = len(glob.glob(f"{origin_path}/*.png"))
+
+    if function == "A2A":
         destination_path = f"../../profiles/{profile}/data/{dataset2}/all"
         a2a(origin_path, destination_path)
-    else:
-        print("specify both datasets using '-d1' and '-d2' flags")
 
-    if function is "A2TV":
-        pass
+    if function == "A2TV":
+        print(f"\ncurrent number of images: {num_files}")
+        a2tv(origin_path, num_files)
 
-    if function is "A2TVT":
-        pass
+    if function == "A2TVT":
+        print(f"\ncurrent number of images: {num_files}")
+        a2tvt(origin_path, num_files)
 

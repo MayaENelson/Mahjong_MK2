@@ -17,6 +17,7 @@ import string
 from xml.etree import ElementTree as et
 import importlib
 import albumentations as A
+from universal_fx import extract_bbox_xml
 
 
 class PascalVOC:
@@ -64,21 +65,19 @@ def get_args():
     return args
 
 
-def create_images(root_path, orig_image_dirs, number, transform_pipeline, transform_type):
-    # re-use all the available images to make a set of 'number' available images to alter
+def read_write_img(root_path, orig_image_dirs, number, transform_pipeline, transform_type):
     orig_image_dirs = itertools.islice(itertools.cycle(orig_image_dirs), number)
-    read_write_img(orig_image_dirs, transform_type, transform_pipeline, root_path)
 
-
-def read_write_img(orig_image_dirs, transform_type, transform_pipeline, root_path):
     for img_dir in orig_image_dirs:
         img = cv.cvtColor(cv.imread(img_dir), cv.COLOR_BGR2RGB)
-        transformed_img_dict = make_transformed_dict(transform_type, transform_pipeline, img_dir, img)
+        transformed_img_dict = make_transformed_dict(transform_type, transform_pipeline, img_dir, img, root_path)
         filename = write_image(transformed_img_dict)
         bbox_write_xml(transform_type, transformed_img_dict, filename, root_path)
 
 
-def make_transformed_dict(transform_type, transform_pipeline, img_dir, img):
+def make_transformed_dict(transform_type, transform_pipeline, img_dir, img, root_path):
+    transform_pipeline = set_pipeline(transform_pipeline)
+
     if transform_type == "non-manual":
         boxes, labels = extract_bbox_xml(img_dir)
         transformed_dict = transform_pipeline(image=img, bboxes=boxes, labels=labels)
@@ -86,6 +85,23 @@ def make_transformed_dict(transform_type, transform_pipeline, img_dir, img):
         transformed_dict = transform_pipeline(image=img)
 
     return transformed_dict
+
+
+def set_pipeline(transform_pipeline):
+    transform_pipeline = instance_request(transform_pipeline)
+    max_height, _ = get_max_hw(root_path)
+    set_rand_crop(transform_pipeline, max_height)
+
+    return transform_pipeline
+
+
+def set_rand_crop(transform_pipeline, max_height):
+    for transform in transform_pipeline.transforms:
+        if isinstance(transform, A.RandomSizedCrop):
+            transform.min_max_height = (300, max_height)
+            transform.height = random.randint(100, 800)
+            transform.width = random.randint(100, 800)
+            break
 
 
 def write_image(transformed_dict):
@@ -159,27 +175,6 @@ def overwrite_original_xmls(idx, new_xml_path):
     tree.write(new_xml_path)
 
 
-def extract_bbox_xml(img_dir):
-    boxes = []
-    labels = []
-
-    xml_path = os.path.splitext(img_dir)[0] + ".xml"
-
-    tree = et.parse(xml_path)
-    root = tree.getroot()
-
-    for obj in root.findall('object'):
-        xmin = int(float(obj.find('bndbox').find('xmin').text))
-        ymin = int(float(obj.find('bndbox').find('ymin').text))
-        xmax = int(float(obj.find('bndbox').find('xmax').text))
-        ymax = int(float(obj.find('bndbox').find('ymax').text))
-
-        boxes.append([xmin, ymin, xmax, ymax])
-        labels.append(obj.find('name').text)
-
-    return boxes, labels
-
-
 def instance_request(instance_name):
     module = importlib.import_module("albumentations_pipelines")
     instance = getattr(module, instance_name)
@@ -203,14 +198,14 @@ def get_input():
     return profile, dataset, number, pipeline, manual, first, show
 
 
-def get_pipeline(manual, transform_pipeline):
+def get_pipeline_check(manual, transform_pipeline):
     if manual:
         transform_type = "manual"
     else:
         transform_type = "non-manual"
 
-    transform_pipeline = instance_request(transform_pipeline)
-    return transform_type, transform_pipeline
+    transform_pipeline_check = instance_request(transform_pipeline)
+    return transform_type, transform_pipeline_check
 
 
 def first_show_flags_fx(first, show, root_path):
@@ -227,20 +222,36 @@ def get_orig_img_dirs(root_path):
     return orig_image_dirs
 
 
+def get_max_hw(root_path):
+    smallest_size = float('inf')
+    smallest_file = None
+    orig_image_dirs = get_orig_img_dirs(root_path)
+
+    for img_dir in orig_image_dirs:
+        image_size = os.path.getsize(img_dir)
+
+        if image_size < smallest_size:
+            smallest_size = image_size
+            smallest_file = img_dir
+
+    img = cv.imread(smallest_file)
+    max_height, max_width, _ = img.shape
+
+    return max_height, max_width
+
+
 if __name__ == "__main__":
-
     profile, dataset, number, pipeline, manual, first, show = get_input()
-
     root_path = f"../../profiles/{profile}/data/{dataset}/all"
     exists = os.path.exists(root_path)
 
     if exists:
         first_show_flags_fx(first, show, root_path)
-        transform_type, transform_pipeline = get_pipeline(manual, pipeline)
+        transform_type, transform_pipeline_check = get_pipeline_check(manual, pipeline)
 
-        if os.path.isfile(f"{root_path}/orig_dirs.txt") and isinstance(transform_pipeline, A.Compose):
+        if os.path.isfile(f"{root_path}/orig_dirs.txt") and isinstance(transform_pipeline_check, A.Compose):
             orig_image_dirs = get_orig_img_dirs(root_path)
-            create_images(root_path, orig_image_dirs, number, transform_pipeline, transform_type)
+            read_write_img(root_path, orig_image_dirs, number, pipeline, transform_type)
         else:
             print("check: specify a pipeline")
             print("check: use the first flag '-f' to make 'orig_dirs.txt'")
